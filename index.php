@@ -227,6 +227,7 @@ foreach ($steamIds as $steamId) {
                                     <?php endforeach; ?>
                                 </ul>
                             <?php endif; ?>
+
                             <?php if (!empty($records['away_records'])): ?>
                                 <h5>离开状态记录</h5>
                                 <ul class="timeline">
@@ -242,6 +243,29 @@ foreach ($steamIds as $steamId) {
                                                         离开时长: <?php echo gmdate('H:i:s', $away['end'] - $away['start']); ?>
                                                     <?php else: ?>
                                                         <span class="text-warning">当前仍处于离开状态</span>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+
+                            <?php if (!empty($records['online_records'])): ?>
+                                <h5>上下线记录</h5>
+                                <ul class="timeline">
+                                    <?php foreach ($records['online_records'] as $online): ?>
+                                        <li>
+                                            <i class="fa fa-power-off"></i>
+                                            <div class="timeline-item">
+                                                <h3 class="timeline-header"><?php echo $online['status'] == 'online' ? '上线' : '下线'; ?></h3>
+                                                <div class="timeline-body">
+                                                    开始时间: <?php echo date('H:i:s', $online['start']); ?><br>
+                                                    <?php if ($online['end']): ?>
+                                                        结束时间: <?php echo date('H:i:s', $online['end']); ?><br>
+                                                        时长: <?php echo gmdate('H:i:s', $online['end'] - $online['start']); ?>
+                                                    <?php else: ?>
+                                                        <span class="text-success">当前仍处于<?php echo $online['status'] == 'online' ? '在线' : '离线'; ?>状态</span>
                                                     <?php endif; ?>
                                                 </div>
                                             </div>

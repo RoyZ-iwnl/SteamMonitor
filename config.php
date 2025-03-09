@@ -252,6 +252,26 @@ function updateUserGameStatus($steamId) {
         }
     }
     
+    // 处理用户上下线记录
+    if (!isset($records['online_records'])) {
+        $records['online_records'] = [];
+    }
+
+    $lastOnline = end($records['online_records']);
+    if ($lastOnline === false || $lastOnline['end'] !== null) {
+        if ($currentState != 0) { // 用户上线
+            $records['online_records'][] = [
+                'start' => $now,
+                'end' => null,
+                'status' => 'online'
+            ];
+        }
+    } else {
+        if ($currentState == 0) { // 用户下线
+            $records['online_records'][count($records['online_records']) - 1]['end'] = $now;
+        }
+    }
+    
     $records['last_check'] = $now;
     $records['user_status'] = $userData['personastate'];
     $records['visibility'] = isset($userData['communityvisibilitystate']) ? $userData['communityvisibilitystate'] : 0;
