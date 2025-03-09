@@ -178,6 +178,7 @@ function updateUserGameStatus($steamId) {
     $records = getUserDailyRecord($steamId);
     $now = time();
     $currentGame = null;
+    $currentState = $userData['personastate']; // 记录在线状态
     
     // 获取当前游戏状态
     if (isset($userData['gameextrainfo']) && isset($userData['gameid'])) {
@@ -231,6 +232,26 @@ function updateUserGameStatus($steamId) {
         }
     }
     
+    // 处理"离开"状态记录
+    if (!isset($records['away_records'])) {
+        $records['away_records'] = [];
+    }
+
+    $lastAway = end($records['away_records']);
+    if ($lastAway === false || $lastAway['end'] !== null) {
+        if ($currentState == 3) { // 进入"离开"状态
+            $records['away_records'][] = [
+                'start' => $now,
+                'end' => null,
+                'status' => 'away'
+            ];
+        }
+    } else {
+        if ($currentState != 3) { // 退出"离开"状态
+            $records['away_records'][count($records['away_records']) - 1]['end'] = $now;
+        }
+    }
+    
     $records['last_check'] = $now;
     $records['user_status'] = $userData['personastate'];
     $records['visibility'] = isset($userData['communityvisibilitystate']) ? $userData['communityvisibilitystate'] : 0;
@@ -240,6 +261,7 @@ function updateUserGameStatus($steamId) {
     
     return $records;
 }
+
 
 /**
  * 检测可能的隐身游戏

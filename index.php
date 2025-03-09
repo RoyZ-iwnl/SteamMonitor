@@ -227,6 +227,30 @@ foreach ($steamIds as $steamId) {
                                     <?php endforeach; ?>
                                 </ul>
                             <?php endif; ?>
+                            <?php if (!empty($records['away_records'])): ?>
+                                <h5>离开状态记录</h5>
+                                <ul class="timeline">
+                                    <?php foreach ($records['away_records'] as $away): ?>
+                                        <li>
+                                            <i class="fa fa-moon"></i>
+                                            <div class="timeline-item">
+                                                <h3 class="timeline-header">离开状态</h3>
+                                                <div class="timeline-body">
+                                                    开始时间: <?php echo date('H:i:s', $away['start']); ?><br>
+                                                    <?php if ($away['end']): ?>
+                                                        结束时间: <?php echo date('H:i:s', $away['end']); ?><br>
+                                                        离开时长: <?php echo gmdate('H:i:s', $away['end'] - $away['start']); ?>
+                                                    <?php else: ?>
+                                                        <span class="text-warning">当前仍处于离开状态</span>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+
+                            
                             
                             <?php if (!empty($hiddenGaming)): ?>
                                 <div class="mt-3 hidden-gaming">
