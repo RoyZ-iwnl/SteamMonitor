@@ -4,6 +4,7 @@ define('STEAM_API_KEY', '你的STEAM_API_KEY'); // 从 https://steamcommunity.co
 define('DATA_DIR', __DIR__ . '/data');
 define('TIMEZONE', 'Asia/Shanghai'); // UTC+8
 //define('RESET_HOUR', 10); // 每天上午10点(UTC+8)重置
+//define('FIREBASE_SERVER_KEY', 'your_firebase_server_key');
 
 // 确保数据目录存在
 if (!file_exists(DATA_DIR)) {
@@ -114,6 +115,45 @@ function saveUserDailyRecord($steamId, $records) {
     
     file_put_contents($recordFile, json_encode($records));
 }
+
+/*
+ * 发送Firebase推送通知
+ * @param string $token FCM令牌
+ * @param array $data 推送数据
+ * @return bool 是否成功
+ * 
+function sendFirebaseNotification($token, $data) {
+    $url = 'https://fcm.googleapis.com/fcm/send';
+    
+    $fields = [
+        'to' => $token,
+        'notification' => [
+            'title' => $data['title'],
+            'body' => $data['message'],
+        ],
+        'data' => $data
+    ];
+    
+    $headers = [
+        'Authorization: key=' . FIREBASE_SERVER_KEY,
+        'Content-Type: application/json'
+    ];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($fields));
+    
+    $result = curl_exec($ch);
+    curl_close($ch);
+    
+    return $result !== false;
+}
+*/
+
 
 /*
  * 检查是否需要重置记录(每天上午10点)
@@ -429,38 +469,75 @@ function detectHiddenGaming($steamId) {
         return $hiddenGaming;
     }
     
-    // 用户状态显示为离线但最近游戏时间有更新
-    if ($userData['personastate'] == 0) { // 0 = 离线
-        foreach ($recentGames as $game) {
-            $lastPlayedTime = $game['last_played'];
-            $playedMinutesLast2Weeks = $game['playtime_2weeks'];
-            
-            // 计算记录中这个游戏的总时长(分钟)
-            $recordedMinutes = 0;
-            foreach ($history as $date => $dayRecord) {
-                foreach ($dayRecord['records'] as $record) {
-                    if ($record['game_id'] == $game['appid']) {
-                        $startTime = $record['start'];
-                        $endTime = $record['end'] ? $record['end'] : time();
-                        $recordedMinutes += ($endTime - $startTime) / 60;
-                    }
+    // 检查最近的游戏记录和用户状态
+    foreach ($recentGames as $game) {
+        $lastPlayedTime = $game['last_played'];
+        $playedMinutesLast2Weeks = $game['playtime_2weeks'];
+        $lastPlayedDate = date('Y-m-d H:i:s', $lastPlayedTime);
+        
+        // 计算记录中这个游戏的总时长(分钟)
+        $recordedMinutes = 0;
+        $lastRecordedTime = 0;
+        
+        foreach ($history as $date => $dayRecord) {
+            foreach ($dayRecord['records'] as $record) {
+                if ($record['game_id'] == $game['appid']) {
+                    $startTime = $record['start'];
+                    $endTime = $record['end'] ? $record['end'] : time();
+                    $recordedMinutes += ($endTime - $startTime) / 60;
+                    $lastRecordedTime = max($lastRecordedTime, $endTime);
                 }
             }
-            
-            // 如果Steam报告的时间比我们记录的长，可能存在隐身游戏
-            if ($playedMinutesLast2Weeks > $recordedMinutes) {
-                $hiddenGaming[] = [
-                    'game_id' => $game['appid'],
-                    'game_name' => $game['name'],
-                    'last_played' => $lastPlayedTime,
-                    'steam_minutes' => $playedMinutesLast2Weeks,
-                    'recorded_minutes' => $recordedMinutes,
-                    'possible_hidden_minutes' => $playedMinutesLast2Weeks - $recordedMinutes
-                ];
-            }
+        }
+        
+        // 检测条件：
+        // 1. Steam报告的时间比记录的长
+        // 2. 最后游玩时间比我们最后记录的时间更新
+        if ($playedMinutesLast2Weeks > $recordedMinutes || 
+            ($lastPlayedTime > $lastRecordedTime && $lastRecordedTime > 0)) {
+            $hiddenGaming[] = [
+                'game_id' => $game['appid'],
+                'game_name' => $game['name'],
+                'last_played' => $lastPlayedTime,
+                'last_played_date' => $lastPlayedDate,  // 新增：最后运行日期
+                'steam_minutes' => $playedMinutesLast2Weeks,
+                'recorded_minutes' => $recordedMinutes,
+                'possible_hidden_minutes' => $playedMinutesLast2Weeks - $recordedMinutes,
+                'detection_reason' => [
+                    'time_difference' => $playedMinutesLast2Weeks > $recordedMinutes,
+                    'last_played_newer' => $lastPlayedTime > $lastRecordedTime
+                ]
+            ];
         }
     }
     
     return $hiddenGaming;
 }
+
+/**
+ * 获取指定日期范围的历史记录
+ * @param string $steamId Steam ID
+ * @param string $startDate 开始日期 (Y-m-d)
+ * @param string $endDate 结束日期 (Y-m-d)
+ * @return array 历史记录数据
+ */
+function getHistoryRecordsByDateRange($steamId, $startDate, $endDate) {
+    $history = [];
+    $current = strtotime($startDate);
+    $end = strtotime($endDate);
+    
+    while ($current <= $end) {
+        $date = date('Y-m-d', $current);
+        $recordFile = DATA_DIR . "/record_" . $steamId . "_" . $date . ".json";
+        
+        if (file_exists($recordFile)) {
+            $history[$date] = json_decode(file_get_contents($recordFile), true);
+        }
+        
+        $current = strtotime('+1 day', $current);
+    }
+    
+    return $history;
+}
+
 ?>
