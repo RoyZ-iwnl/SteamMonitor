@@ -10,9 +10,6 @@ if (file_exists($configFile)) {
     $steamIds = json_decode(file_get_contents($configFile), true);
 }
 
-// 检查是否需要重置记录
-checkAndResetRecord();
-
 // 更新所有用户的游戏状态
 foreach ($steamIds as $steamId) {
     updateUserGameStatus($steamId);

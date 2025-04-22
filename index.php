@@ -25,8 +25,13 @@ if (isset($_GET['remove']) && in_array($_GET['remove'], $steamIds)) {
     file_put_contents($configFile, json_encode($steamIds));
 }
 
-// 检查是否需要重置记录
-checkAndResetRecord();
+// 处理清除旧记录
+if (isset($_POST['clean_records']) && !empty($_POST['days_to_keep'])) {
+    $daysToKeep = (int)$_POST['days_to_keep'];
+    if ($daysToKeep > 0) {
+        cleanOldRecords($daysToKeep);
+    }
+}
 
 // 更新所有用户的游戏状态
 $allRecords = [];
@@ -166,6 +171,23 @@ foreach ($steamIds as $steamId) {
                         </form>
                     </div>
                 </div>
+                <div class="card mb-4">
+                    <div class="card-header">
+                        记录管理
+                    </div>
+                    <div class="card-body">
+                        <form method="post" class="row g-3">
+                            <div class="col-md-10">
+                                <input type="number" class="form-control" name="days_to_keep" placeholder="保留天数" required min="1">
+                            </div>
+                            <div class="col-md-2">
+                                <button type="submit" name="clean_records" class="btn btn-warning w-100" onclick="return confirm('确定要清除旧记录吗？此操作不可恢复！');">
+                                    清除旧记录
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
                 
                 <?php foreach ($steamIds as $steamId): ?>
                     <?php 
@@ -185,19 +207,28 @@ foreach ($steamIds as $steamId) {
                     ?>
                     
                     <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <div>
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <a href="https://steamcommunity.com/profiles/<?php echo $steamId; ?>" target="_blank">
                                 <img src="<?php echo $userData['avatarmedium']; ?>" alt="Avatar" class="rounded-circle me-2" width="32" height="32">
                                 <span class="<?php echo $statusClass; ?>"><?php echo $userData['personaname']; ?></span>
-                                <?php if (isset($userData['gameextrainfo'])): ?>
-                                    <span class="ms-2 badge bg-success">正在游戏: <?php echo $userData['gameextrainfo']; ?></span>
-                                <?php endif; ?>
-                            </div>
-                            <div>
-                                <a href="?refresh=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-info me-2"><i class="fas fa-sync-alt"></i> 刷新</a>
-                                <a href="?remove=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定要删除这个用户吗?');"><i class="fas fa-trash"></i> 删除</a>
-                            </div>
+                            </a>
+                            <?php if (isset($userData['gameextrainfo'])): ?>
+                                <span class="ms-2 badge bg-success">正在游戏: <?php echo $userData['gameextrainfo']; ?></span>
+                            <?php endif; ?>
                         </div>
+                        <div>
+                            <a href="analysis.php?id=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-info me-2">
+                                <i class="fas fa-chart-bar"></i> 分析
+                            </a>
+                            <a href="?refresh=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-info me-2">
+                                <i class="fas fa-sync-alt"></i> 刷新
+                            </a>
+                            <a href="?remove=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定要删除这个用户吗?');">
+                                <i class="fas fa-trash"></i>
+                            </a>
+                        </div>
+                    </div>
                         <div class="card-body">
                             <h5>今日游戏记录 (UTC+8)</h5>
                             

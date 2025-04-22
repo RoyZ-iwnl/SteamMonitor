@@ -3,7 +3,7 @@
 define('STEAM_API_KEY', '你的STEAM_API_KEY'); // 从 https://steamcommunity.com/dev/apikey 获取
 define('DATA_DIR', __DIR__ . '/data');
 define('TIMEZONE', 'Asia/Shanghai'); // UTC+8
-define('RESET_HOUR', 10); // 每天上午10点(UTC+8)重置
+//define('RESET_HOUR', 10); // 每天上午10点(UTC+8)重置
 
 // 确保数据目录存在
 if (!file_exists(DATA_DIR)) {
@@ -115,10 +115,10 @@ function saveUserDailyRecord($steamId, $records) {
     file_put_contents($recordFile, json_encode($records));
 }
 
-/**
+/*
  * 检查是否需要重置记录(每天上午10点)
  * @return bool 是否已重置
- */
+
 function checkAndResetRecord() {
     $resetFile = DATA_DIR . "/last_reset.txt";
     $today = date('Y-m-d');
@@ -141,6 +141,7 @@ function checkAndResetRecord() {
     
     return false;
 }
+*/
 
 /**
  * 获取用户历史游戏记录
@@ -280,6 +281,136 @@ function updateUserGameStatus($steamId) {
     saveUserDailyRecord($steamId, $records);
     
     return $records;
+}
+
+/**
+ * 获取用户愿望单
+ * @param string $steamId Steam ID
+ * @return array|false 愿望单信息或失败时返回false
+ */
+function getUserWishlist($steamId) {
+    $url = "https://store.steampowered.com/api/wishlist/profiles/" . $steamId;
+    $response = file_get_contents($url);
+    
+    if ($response === false) {
+        return false;
+    }
+    
+    $data = json_decode($response, true);
+    
+    if (is_array($data)) {
+        // 添加获取时间
+        foreach ($data as &$item) {
+            $item['fetch_time'] = time();
+        }
+        
+        // 保存到缓存
+        $cacheFile = DATA_DIR . "/wishlist_" . $steamId . ".json";
+        file_put_contents($cacheFile, json_encode($data));
+        
+        return $data;
+    }
+    
+    return false;
+}
+
+/**
+ * 清除旧记录
+ * @param int $daysToKeep 保留多少天的记录
+ */
+function cleanOldRecords($daysToKeep = 30) {
+    $files = glob(DATA_DIR . "/record_*_*.json");
+    $now = time();
+    
+    foreach ($files as $file) {
+        $fileDate = preg_replace('/.*record_.*_(\d{4}-\d{2}-\d{2})\.json/', '$1', $file);
+        $fileTime = strtotime($fileDate);
+        
+        if ($fileTime && ($now - $fileTime) > ($daysToKeep * 86400)) {
+            unlink($file);
+        }
+    }
+}
+
+/**
+ * 分析用户使用习惯
+ * @param string $steamId Steam ID
+ * @param int $days 分析天数
+ * @return array 使用习惯分析结果
+ */
+function analyzeUserHabits($steamId, $days = 7) {
+    $history = getUserHistoryRecords($steamId, $days);
+    $analysis = [
+        'daily_stats' => [],
+        'weekly_stats' => [
+            'monday' => ['total' => 0, 'count' => 0],
+            'tuesday' => ['total' => 0, 'count' => 0],
+            'wednesday' => ['total' => 0, 'count' => 0],
+            'thursday' => ['total' => 0, 'count' => 0],
+            'friday' => ['total' => 0, 'count' => 0],
+            'saturday' => ['total' => 0, 'count' => 0],
+            'sunday' => ['total' => 0, 'count' => 0]
+        ],
+        'most_played_games' => [],
+        'average_session' => 0,
+        'total_gaming_time' => 0,
+        'peak_hours' => array_fill(0, 24, 0)
+    ];
+    
+    $totalSessions = 0;
+    $totalTime = 0;
+    $gameTimes = [];
+    
+    foreach ($history as $date => $dayRecord) {
+        $dayStats = [
+            'total_time' => 0,
+            'sessions' => 0,
+            'games' => []
+        ];
+        
+        $dayOfWeek = strtolower(date('l', strtotime($date)));
+        
+        foreach ($dayRecord['records'] as $record) {
+            $startTime = $record['start'];
+            $endTime = $record['end'] ?? time();
+            $duration = $endTime - $startTime;
+            
+            // 更新每日统计
+            $dayStats['total_time'] += $duration;
+            $dayStats['sessions']++;
+            
+            // 更新游戏时间统计
+            if (!isset($gameTimes[$record['game_id']])) {
+                $gameTimes[$record['game_id']] = [
+                    'name' => $record['game_name'],
+                    'total_time' => 0
+                ];
+            }
+            $gameTimes[$record['game_id']]['total_time'] += $duration;
+            
+            // 更新峰值时间统计
+            $hour = (int)date('G', $startTime);
+            $analysis['peak_hours'][$hour]++;
+            
+            // 更新每周统计
+            $analysis['weekly_stats'][$dayOfWeek]['total'] += $duration;
+            $analysis['weekly_stats'][$dayOfWeek]['count']++;
+        }
+        
+        $analysis['daily_stats'][$date] = $dayStats;
+        $totalSessions += $dayStats['sessions'];
+        $totalTime += $dayStats['total_time'];
+    }
+    
+    // 计算平均会话时长
+    $analysis['average_session'] = $totalSessions > 0 ? $totalTime / $totalSessions : 0;
+    $analysis['total_gaming_time'] = $totalTime;
+    
+    // 排序游戏时间
+    arsort($gameTimes);
+    $analysis['most_played_games'] = array_slice($gameTimes, 0, 5, true);
+    
+    return $analysis;
 }
 
 
