@@ -1,245 +1,349 @@
 <?php
+// index.php - 主页面
 require_once 'config.php';
 
-// 获取监控的Steam用户列表
-$configFile = DATA_DIR . "/monitored_users.json";
+// 获取要监控的Steam ID
 $steamIds = [];
+$configFile = DATA_DIR . "/monitored_users.json";
+
 if (file_exists($configFile)) {
     $steamIds = json_decode(file_get_contents($configFile), true);
 }
 
-// 处理日期范围选择
-$startDate = $_GET['start_date'] ?? date('Y-m-d', strtotime('-7 days'));
-$endDate = $_GET['end_date'] ?? date('Y-m-d');
-
-// 获取选定的Steam ID
-$selectedId = $_GET['steam_id'] ?? ($steamIds[0] ?? '');
-
-$userData = null;
-$gameRecords = null;
-$hiddenGaming = null;
-$wishlistData = null;
-$historicalData = null;
-
-if ($selectedId) {
-    $userData = getSteamUserData($selectedId);
-    if (isset($_GET['start_date']) && isset($_GET['end_date'])) {
-        $historicalData = getHistoryRecordsByDateRange($selectedId, $startDate, $endDate);
-    } else {
-        $gameRecords = getUserDailyRecord($selectedId);
+// 处理添加新用户
+if (isset($_POST['add_user']) && !empty($_POST['steam_id'])) {
+    $newId = trim($_POST['steam_id']);
+    if (!in_array($newId, $steamIds)) {
+        $steamIds[] = $newId;
+        file_put_contents($configFile, json_encode($steamIds));
     }
-    $hiddenGaming = detectHiddenGaming($selectedId);
-    $wishlistData = getWishlistChanges($selectedId);
 }
 
-// HTML头部
+// 处理删除用户
+if (isset($_GET['remove']) && in_array($_GET['remove'], $steamIds)) {
+    $steamIds = array_diff($steamIds, [$_GET['remove']]);
+    file_put_contents($configFile, json_encode($steamIds));
+}
+
+// 处理清除旧记录
+if (isset($_POST['clean_records']) && !empty($_POST['days_to_keep'])) {
+    $daysToKeep = (int)$_POST['days_to_keep'];
+    if ($daysToKeep > 0) {
+        cleanOldRecords($daysToKeep);
+    }
+}
+
+// 更新所有用户的游戏状态
+$allRecords = [];
+$allHiddenGaming = [];
+
+foreach ($steamIds as $steamId) {
+    updateUserGameStatus($steamId);
+    $allRecords[$steamId] = getUserDailyRecord($steamId);
+    $allHiddenGaming[$steamId] = detectHiddenGaming($steamId);
+}
+
+// HTML输出
 ?>
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Steam 监控系统</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
+    <title>Steam游戏时间监控</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
     <style>
-        .hidden-gaming-alert {
-            border-left: 4px solid #dc3545;
-            background-color: #fff;
-            padding: 15px;
-            margin-bottom: 15px;
+        body {
+            background-color: #1b2838;
+            color: #c7d5e0;
         }
-        .wishlist-item {
-            margin-bottom: 10px;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .wishlist-new {
-            border-left: 4px solid #28a745;
-        }
-        .wishlist-header {
-            cursor: pointer;
-            padding: 10px;
-            background-color: #f8f9fa;
-            border-radius: 4px;
-        }
-        .history-controls {
+        .card {
+            background-color: #2a475e;
+            border: none;
             margin-bottom: 20px;
+        }
+        .card-header {
+            background-color: #171a21;
+            color: #ffffff;
+        }
+        .timeline {
+            position: relative;
+            margin: 0 0 20px 0;
+            padding: 0;
+            list-style: none;
+        }
+        .timeline:before {
+            content: '';
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: #1b2838;
+            left: 31px;
+            margin: 0;
+            border-radius: 2px;
+        }
+        .timeline > li {
+            position: relative;
+            margin-bottom: 15px;
+            margin-right: 10px;
+        }
+        .timeline > li:before,
+        .timeline > li:after {
+            content: " ";
+            display: table;
+        }
+        .timeline > li:after {
+            clear: both;
+        }
+        .timeline > li > .timeline-item {
+            margin-left: 60px;
+            margin-right: 15px;
+            background: #1b2838;
+            color: #c7d5e0;
+            padding: 10px;
+            position: relative;
+            border-radius: 3px;
+        }
+        .timeline > li > .fa {
+            width: 30px;
+            height: 30px;
+            font-size: 16px;
+            line-height: 30px;
+            position: absolute;
+            color: #fff;
+            background: #66c0f4;
+            border-radius: 50%;
+            text-align: center;
+            left: 18px;
+            top: 0;
+        }
+        .user-offline {
+            color: #898989;
+        }
+        .user-online {
+            color: #66c0f4;
+        }
+        .user-ingame {
+            color: #90ba3c;
+        }
+        .hidden-gaming {
+            background-color: #76448A;
+            padding: 5px;
+            border-radius: 3px;
+            color: #fff;
+        }
+        .btn-steam {
+            background-color: #66c0f4;
+            color: #fff;
+        }
+        .btn-steam:hover {
+            background-color: #1b2838;
+            color: #66c0f4;
+        }
+        .refresh-btn {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
         }
     </style>
 </head>
 <body>
-<div class="container mt-4">
-    <h1>Steam 监控系统</h1>
-    
-    <!-- 用户选择 -->
-    <div class="mb-4">
-        <form class="row g-3">
-            <div class="col-auto">
-                <select name="steam_id" class="form-select" onchange="this.form.submit()">
-                    <option value="">选择用户...</option>
-                    <?php foreach ($steamIds as $id): ?>
-                        <?php $name = getSteamUserData($id)['personaname'] ?? $id; ?>
-                        <option value="<?= htmlspecialchars($id) ?>" <?= $id === $selectedId ? 'selected' : '' ?>>
-                            <?= htmlspecialchars($name) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            
-            <!-- 日期范围选择 -->
-            <div class="col-auto">
-                <input type="date" name="start_date" class="form-control" value="<?= htmlspecialchars($startDate) ?>">
-            </div>
-            <div class="col-auto">
-                <input type="date" name="end_date" class="form-control" value="<?= htmlspecialchars($endDate) ?>">
-            </div>
-            <div class="col-auto">
-                <button type="submit" class="btn btn-primary">查看历史记录</button>
-            </div>
-        </form>
-    </div>
-
-    <?php if ($selectedId && $userData): ?>
-        <!-- 用户信息 -->
-        <div class="card mb-4">
-            <div class="card-body">
-                <h2 class="card-title">
-                    <img src="<?= htmlspecialchars($userData['avatarmedium']) ?>" alt="avatar" class="rounded me-2">
-                    <?= htmlspecialchars($userData['personaname']) ?>
-                </h2>
-                <p class="card-text">
-                    状态: <?= getPersonaState($userData['personastate']) ?>
-                    <?php if (isset($userData['gameextrainfo'])): ?>
-                        | 当前游戏: <?= htmlspecialchars($userData['gameextrainfo']) ?>
-                    <?php endif; ?>
-                </p>
-            </div>
-        </div>
-
-        <!-- 隐身游戏检测 -->
-        <?php if (!empty($hiddenGaming)): ?>
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h3>可能的隐身游戏行为</h3>
-                </div>
-                <div class="card-body">
-                    <?php foreach ($hiddenGaming as $game): ?>
-                        <div class="hidden-gaming-alert">
-                            <h4><?= htmlspecialchars($game['game_name']) ?></h4>
-                            <p>最后运行时间: <?= htmlspecialchars($game['last_played_date']) ?></p>
-                            <p>Steam记录时长: <?= round($game['steam_minutes'], 1) ?>分钟</p>
-                            <p>本地记录时长: <?= round($game['recorded_minutes'], 1) ?>分钟</p>
-                            <p>可能的隐身时长: <?= round($game['possible_hidden_minutes'], 1) ?>分钟</p>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            </div>
-        <?php endif; ?>
-
-        <!-- 愿望单监控 -->
-        <?php if ($wishlistData): ?>
-            <div class="card mb-4">
-                <div class="card-header">
-                    <h3>愿望单监控 
-                        <?php if (!empty($wishlistData['changes']['new_items'])): ?>
-                            <span class="badge bg-success">新增 <?= count($wishlistData['changes']['new_items']) ?></span>
-                        <?php endif; ?>
-                    </h3>
-                </div>
-                <div class="card-body">
-                    <div class="wishlist-header" onclick="toggleWishlist()">
-                        <h4>
-                            愿望单游戏 (<?= count($wishlistData['wishlist']) ?>)
-                            <span class="float-end" id="wishlist-toggle">▼</span>
-                        </h4>
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-12">
+                <h1 class="mb-4"><i class="fab fa-steam"></i> Steam游戏时间监控</h1>
+                
+                <div class="card mb-4">
+                    <div class="card-header">
+                        添加监控用户
                     </div>
-                    <div id="wishlist-content" style="display: <?= !empty($wishlistData['changes']['new_items']) ? 'block' : 'none' ?>;">
-                        <?php foreach ($wishlistData['wishlist'] as $appId => $game): ?>
-                            <div class="wishlist-item <?= in_array($game, $wishlistData['changes']['new_items']) ? 'wishlist-new' : '' ?>">
-                                <h5><?= htmlspecialchars($game['name']) ?></h5>
-                                <p>价格: ¥<?= number_format($game['subs'][0]['price'] / 100, 2) ?></p>
-                                <?php if (in_array($game, $wishlistData['changes']['new_items'])): ?>
-                                    <span class="badge bg-success">新增</span>
-                                <?php endif; ?>
+                    <div class="card-body">
+                        <form method="post" class="row g-3">
+                            <div class="col-md-10">
+                                <input type="text" class="form-control" name="steam_id" placeholder="输入Steam ID或自定义URL ID" required>
                             </div>
-                        <?php endforeach; ?>
+                            <div class="col-md-2">
+                                <button type="submit" name="add_user" class="btn btn-steam w-100">添加</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
-            </div>
-        <?php endif; ?>
+                <div class="card mb-4">
+                    <div class="card-header">
+                        记录管理
+                    </div>
+                    <div class="card-body">
+                        <form method="post" class="row g-3">
+                            <div class="col-md-10">
+                                <input type="number" class="form-control" name="days_to_keep" placeholder="保留天数" required min="1">
+                            </div>
+                            <div class="col-md-2">
+                                <button type="submit" name="clean_records" class="btn btn-warning w-100" onclick="return confirm('确定要清除旧记录吗？此操作不可恢复！');">
+                                    清除旧记录
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+                <?php foreach ($steamIds as $steamId): ?>
+                    <?php 
+                    $userData = getSteamUserData($steamId);
+                    $records = $allRecords[$steamId] ?? ['records' => []];
+                    $hiddenGaming = $allHiddenGaming[$steamId] ?? [];
+                    
+                    if (!$userData) continue;
+                    
+                    // 用户状态类
+                    $statusClass = 'user-offline';
+                    if (isset($userData['gameextrainfo'])) {
+                        $statusClass = 'user-ingame';
+                    } elseif ($userData['personastate'] > 0) {
+                        $statusClass = 'user-online';
+                    }
+                    ?>
+                    
+                    <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <div>
+                            <a href="https://steamcommunity.com/profiles/<?php echo $steamId; ?>" target="_blank">
+                                <img src="<?php echo $userData['avatarmedium']; ?>" alt="Avatar" class="rounded-circle me-2" width="32" height="32">
+                                <span class="<?php echo $statusClass; ?>"><?php echo $userData['personaname']; ?></span>
+                            </a>
+                            <?php if (isset($userData['gameextrainfo'])): ?>
+                                <span class="ms-2 badge bg-success">正在游戏: <?php echo $userData['gameextrainfo']; ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <div>
+                            <a href="analysis.php?id=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-info me-2">
+                                <i class="fas fa-chart-bar"></i> 分析
+                            </a>
+                            <a href="?refresh=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-info me-2">
+                                <i class="fas fa-sync-alt"></i> 刷新
+                            </a>
+                            <a href="?remove=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定要删除这个用户吗?');">
+                                <i class="fas fa-trash"></i>
+                            </a>
+                        </div>
+                    </div>
+                        <div class="card-body">
+                            <h5>今日游戏记录 (UTC+8)</h5>
+                            
+                            <?php if (empty($records['records'])): ?>
+                                <p>今天还没有游戏记录。</p>
+                            <?php else: ?>
+                                <ul class="timeline">
+                                    <?php foreach ($records['records'] as $record): ?>
+                                        <li>
+                                            <i class="fa fa-gamepad"></i>
+                                            <div class="timeline-item">
+                                                <h3 class="timeline-header">
+                                                    <?php echo $record['game_name']; ?>
+                                                </h3>
+                                                <div class="timeline-body">
+                                                    开始时间: <?php echo date('H:i:s', $record['start']); ?><br>
+                                                    <?php if ($record['end']): ?>
+                                                        结束时间: <?php echo date('H:i:s', $record['end']); ?><br>
+                                                        游戏时长: <?php echo gmdate('H:i:s', $record['end'] - $record['start']); ?>
+                                                    <?php else: ?>
+                                                        状态: <span class="text-success">正在游戏中</span><br>
+                                                        已游戏时长: <?php echo gmdate('H:i:s', time() - $record['start']); ?>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
 
-        <!-- 游戏记录 -->
-        <div class="card mb-4">
-            <div class="card-header">
-                <h3><?= isset($_GET['start_date']) ? '历史记录' : '今日记录' ?></h3>
-            </div>
-            <div class="card-body">
-                <?php
-                $records = $historicalData ?? [$gameRecords];
-                foreach ($records as $date => $dayRecord):
-                    if (empty($dayRecord['records'])) continue;
-                ?>
-                    <h4><?= $date ?></h4>
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>游戏</th>
-                                <th>开始时间</th>
-                                <th>结束时间</th>
-                                <th>持续时间</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($dayRecord['records'] as $record): ?>
-                                <tr>
-                                    <td><?= htmlspecialchars($record['game_name']) ?></td>
-                                    <td><?= date('H:i:s', $record['start']) ?></td>
-                                    <td><?= $record['end'] ? date('H:i:s', $record['end']) : '进行中' ?></td>
-                                    <td>
-                                        <?php
-                                        $duration = ($record['end'] ?? time()) - $record['start'];
-                                        echo floor($duration / 3600) . '小时 ' . floor(($duration % 3600) / 60) . '分钟';
-                                        ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
+                            <?php if (!empty($records['away_records'])): ?>
+                                <h5>离开状态记录</h5>
+                                <ul class="timeline">
+                                    <?php foreach ($records['away_records'] as $away): ?>
+                                        <li>
+                                            <i class="fa fa-moon"></i>
+                                            <div class="timeline-item">
+                                                <h3 class="timeline-header">离开状态</h3>
+                                                <div class="timeline-body">
+                                                    开始时间: <?php echo date('H:i:s', $away['start']); ?><br>
+                                                    <?php if ($away['end']): ?>
+                                                        结束时间: <?php echo date('H:i:s', $away['end']); ?><br>
+                                                        离开时长: <?php echo gmdate('H:i:s', $away['end'] - $away['start']); ?>
+                                                    <?php else: ?>
+                                                        <span class="text-warning">当前仍处于离开状态</span>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+
+                            <?php if (!empty($records['online_records'])): ?>
+                                <h5>上下线记录</h5>
+                                <ul class="timeline">
+                                    <?php foreach ($records['online_records'] as $online): ?>
+                                        <li>
+                                            <i class="fa fa-power-off"></i>
+                                            <div class="timeline-item">
+                                                <h3 class="timeline-header"><?php echo $online['status'] == 'online' ? '上线' : '下线'; ?></h3>
+                                                <div class="timeline-body">
+                                                    开始时间: <?php echo date('H:i:s', $online['start']); ?><br>
+                                                    <?php if ($online['end']): ?>
+                                                        结束时间: <?php echo date('H:i:s', $online['end']); ?><br>
+                                                        时长: <?php echo gmdate('H:i:s', $online['end'] - $online['start']); ?>
+                                                    <?php else: ?>
+                                                        <span class="text-success">当前仍处于<?php echo $online['status'] == 'online' ? '在线' : '离线'; ?>状态</span>
+                                                    <?php endif; ?>
+                                                </div>
+                                            </div>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            <?php endif; ?>
+
+                            
+                            
+                            <?php if (!empty($hiddenGaming)): ?>
+                                <div class="mt-3 hidden-gaming">
+                                    <h5><i class="fas fa-user-ninja"></i> 可能的隐身游戏</h5>
+                                    <ul>
+                                        <?php foreach ($hiddenGaming as $hidden): ?>
+                                            <li>
+                                                <?php echo $hidden['game_name']; ?> - 
+                                                可能隐身时长: <?php echo gmdate('H:i:s', $hidden['possible_hidden_minutes'] * 60); ?>
+                                                (Steam: <?php echo $hidden['steam_minutes']; ?>分钟, 记录: <?php echo round($hidden['recorded_minutes']); ?>分钟)
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
                 <?php endforeach; ?>
+                
+                <?php if (empty($steamIds)): ?>
+                    <div class="alert alert-info mt-4">
+                        请添加Steam用户ID来开始监控。
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
-    <?php endif; ?>
-</div>
-
-<script>
-function toggleWishlist() {
-    const content = document.getElementById('wishlist-content');
-    const toggle = document.getElementById('wishlist-toggle');
-    if (content.style.display === 'none') {
-        content.style.display = 'block';
-        toggle.textContent = '▼';
-    } else {
-        content.style.display = 'none';
-        toggle.textContent = '▶';
-    }
-}
-
-// 添加辅助函数
-function getPersonaState(state) {
-    const states = {
-        0: '离线',
-        1: '在线',
-        2: '忙碌',
-        3: '离开',
-        4: '打盾',
-        5: '查找交易',
-        6: '查找组队'
-    };
-    return states[state] || '未知';
-}
-</script>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    </div>
+    
+    <a href="?refresh=all" class="btn btn-steam btn-lg rounded-circle refresh-btn">
+        <i class="fas fa-sync-alt"></i>
+    </a>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 每60秒自动刷新页面
+        setTimeout(function() {
+            window.location.reload();
+        }, 60000);
+    </script>
 </body>
 </html>
