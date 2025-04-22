@@ -33,14 +33,58 @@ if (isset($_POST['clean_records']) && !empty($_POST['days_to_keep'])) {
     }
 }
 
-// 更新所有用户的游戏状态
+// 历史记录日期选择处理
+$selectedDate = isset($_GET['date']) ? $_GET['date'] : date('Y-m-d');
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $selectedDate)) {
+    $selectedDate = date('Y-m-d');
+}
+
+// 默认显示今天，历史日期选项为近30天
+$historyDates = [];
+for ($i = 0; $i < 30; $i++) {
+    $historyDates[] = date('Y-m-d', strtotime("-$i days"));
+}
+
+// 更新所有用户的游戏状态（仅在查看今天时才更新）
 $allRecords = [];
 $allHiddenGaming = [];
+$allWishlists = [];
+$allWishlistNewToday = [];
 
 foreach ($steamIds as $steamId) {
-    updateUserGameStatus($steamId);
-    $allRecords[$steamId] = getUserDailyRecord($steamId);
+    if ($selectedDate === date('Y-m-d')) {
+        updateUserGameStatus($steamId);
+    }
+    // 读取当天或历史的游戏记录
+    $recordFile = DATA_DIR . "/record_" . $steamId . "_" . $selectedDate . ".json";
+    if (file_exists($recordFile)) {
+        $allRecords[$steamId] = json_decode(file_get_contents($recordFile), true);
+    } else {
+        $allRecords[$steamId] = ['records' => []];
+    }
+    // 检测隐身游戏（还是以今天为准）
     $allHiddenGaming[$steamId] = detectHiddenGaming($steamId);
+    // 愿望单获取 + 新增项检测
+    $wishlist = [];
+    $wishlistFile = DATA_DIR . "/wishlist_" . $steamId . ".json";
+    if (file_exists($wishlistFile)) {
+        $wishlist = json_decode(file_get_contents($wishlistFile), true);
+        if (!is_array($wishlist)) $wishlist = [];
+    } else {
+        $wishlist = getUserWishlist($steamId);
+        if (!is_array($wishlist)) $wishlist = [];
+    }
+    $allWishlists[$steamId] = $wishlist;
+    // 检查是否有今日新增游戏
+    $hasNewToday = false;
+    $today = date('Y-m-d');
+    foreach ($wishlist as $appId => $item) {
+        if (isset($item['fetch_time']) && date('Y-m-d', $item['fetch_time']) == $today) {
+            $hasNewToday = true;
+            break;
+        }
+    }
+    $allWishlistNewToday[$steamId] = $hasNewToday;
 }
 
 // HTML输出
@@ -148,6 +192,28 @@ foreach ($steamIds as $steamId) {
             right: 20px;
             z-index: 1000;
         }
+        .wishlist-title {
+            cursor: pointer;
+            user-select: none;
+        }
+        .wishlist-list {
+            margin-bottom: 0;
+        }
+        .wishlist-new-today {
+            color: #fff;
+            background: #27ae60;
+            border: none;
+            font-weight: bold;
+        }
+        .wishlist-toggle {
+            transition: all 0.2s;
+        }
+        .wishlist-collapsed .wishlist-toggle {
+            transform: rotate(0deg);
+        }
+        .wishlist-expanded .wishlist-toggle {
+            transform: rotate(90deg);
+        }
     </style>
 </head>
 <body>
@@ -188,15 +254,40 @@ foreach ($steamIds as $steamId) {
                         </form>
                     </div>
                 </div>
+                <div class="card mb-4">
+                    <div class="card-header">
+                        历史记录查看
+                    </div>
+                    <div class="card-body">
+                        <form method="get" class="row g-3">
+                            <div class="col-md-10">
+                                <select class="form-select" name="date" onchange="this.form.submit()">
+                                    <?php foreach ($historyDates as $date): ?>
+                                        <option value="<?php echo $date; ?>" <?php if ($selectedDate === $date) echo 'selected'; ?>>
+                                            <?php echo $date . ($date === date('Y-m-d') ? ' (今天)' : ''); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <noscript>
+                                    <button type="submit" class="btn btn-info w-100">查看</button>
+                                </noscript>
+                            </div>
+                        </form>
+                    </div>
+                </div>
                 
                 <?php foreach ($steamIds as $steamId): ?>
                     <?php 
                     $userData = getSteamUserData($steamId);
                     $records = $allRecords[$steamId] ?? ['records' => []];
                     $hiddenGaming = $allHiddenGaming[$steamId] ?? [];
-                    
+                    $wishlist = $allWishlists[$steamId] ?? [];
+                    $wishlistNewToday = $allWishlistNewToday[$steamId] ?? false;
+
                     if (!$userData) continue;
-                    
+
                     // 用户状态类
                     $statusClass = 'user-offline';
                     if (isset($userData['gameextrainfo'])) {
@@ -204,6 +295,11 @@ foreach ($steamIds as $steamId) {
                     } elseif ($userData['personastate'] > 0) {
                         $statusClass = 'user-online';
                     }
+
+                    // 愿望单按添加时间排序（降序）
+                    uasort($wishlist, function($a, $b) {
+                        return ($b['fetch_time'] ?? 0) <=> ($a['fetch_time'] ?? 0);
+                    });
                     ?>
                     
                     <div class="card">
@@ -221,19 +317,21 @@ foreach ($steamIds as $steamId) {
                             <a href="analysis.php?id=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-info me-2">
                                 <i class="fas fa-chart-bar"></i> 分析
                             </a>
+                            <?php if ($selectedDate === date('Y-m-d')): ?>
                             <a href="?refresh=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-info me-2">
                                 <i class="fas fa-sync-alt"></i> 刷新
                             </a>
+                            <?php endif; ?>
                             <a href="?remove=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定要删除这个用户吗?');">
                                 <i class="fas fa-trash"></i>
                             </a>
                         </div>
                     </div>
                         <div class="card-body">
-                            <h5>今日游戏记录 (UTC+8)</h5>
+                            <h5><?php echo $selectedDate === date('Y-m-d') ? "今日" : $selectedDate; ?>游戏记录 (UTC+8)</h5>
                             
                             <?php if (empty($records['records'])): ?>
-                                <p>今天还没有游戏记录。</p>
+                                <p>本日没有游戏记录。</p>
                             <?php else: ?>
                                 <ul class="timeline">
                                     <?php foreach ($records['records'] as $record): ?>
@@ -305,8 +403,6 @@ foreach ($steamIds as $steamId) {
                                 </ul>
                             <?php endif; ?>
 
-                            
-                            
                             <?php if (!empty($hiddenGaming)): ?>
                                 <div class="mt-3 hidden-gaming">
                                     <h5><i class="fas fa-user-ninja"></i> 可能的隐身游戏</h5>
@@ -316,11 +412,45 @@ foreach ($steamIds as $steamId) {
                                                 <?php echo $hidden['game_name']; ?> - 
                                                 可能隐身时长: <?php echo gmdate('H:i:s', $hidden['possible_hidden_minutes'] * 60); ?>
                                                 (Steam: <?php echo $hidden['steam_minutes']; ?>分钟, 记录: <?php echo round($hidden['recorded_minutes']); ?>分钟)
+                                                <!--<span class="ms-2">最后运行: <?php //echo date('Y-m-d H:i:s', $hidden['last_played']); ?></span>-->
                                             </li>
                                         <?php endforeach; ?>
                                     </ul>
                                 </div>
                             <?php endif; ?>
+
+                            <!-- 愿望单折叠面板 -->
+                            <div class="mt-3">
+                                <div class="wishlist-title d-flex align-items-center <?php echo $wishlistNewToday ? 'wishlist-expanded' : 'wishlist-collapsed'; ?>" 
+                                    data-bs-toggle="collapse" 
+                                    data-bs-target="#wishlist-<?php echo $steamId; ?>"
+                                    aria-expanded="<?php echo $wishlistNewToday ? 'true' : 'false'; ?>"
+                                    aria-controls="wishlist-<?php echo $steamId; ?>">
+                                    <i class="fas fa-caret-right wishlist-toggle me-2"></i>
+                                    <span>当前愿望单（<?php echo count($wishlist); ?>）</span>
+                                    <?php if ($wishlistNewToday): ?>
+                                        <span class="badge wishlist-new-today ms-2">今日有新增</span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="collapse <?php echo $wishlistNewToday ? 'show' : ''; ?>" id="wishlist-<?php echo $steamId; ?>">
+                                    <?php if (!empty($wishlist)): ?>
+                                        <ul class="list-group wishlist-list mt-2">
+                                            <?php foreach ($wishlist as $appId => $item): ?>
+                                                <li class="list-group-item d-flex justify-content-between align-items-center" style="background:#212c3d;color:#c7d5e0;">
+                                                    <a href="https://store.steampowered.com/app/<?php echo $appId; ?>" target="_blank" style="color:#66c0f4;text-decoration:none;">
+                                                        <?php echo htmlspecialchars($item['name'] ?? $appId); ?>
+                                                    </a>
+                                                    <span class="ms-2 text-muted" style="font-size:0.9em;">
+                                                        添加时间: <?php echo isset($item['fetch_time']) ? date('Y-m-d H:i:s', $item['fetch_time']) : '未知'; ?>
+                                                    </span>
+                                                </li>
+                                            <?php endforeach; ?>
+                                        </ul>
+                                    <?php else: ?>
+                                        <div class="text-muted mt-2">暂无愿望单数据。</div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 <?php endforeach; ?>
@@ -340,10 +470,20 @@ foreach ($steamIds as $steamId) {
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
     <script>
-        // 每60秒自动刷新页面
+        // 每60秒自动刷新页面（仅查看今日时自动刷新）
+        <?php if ($selectedDate === date('Y-m-d')): ?>
         setTimeout(function() {
             window.location.reload();
         }, 60000);
+        <?php endif; ?>
+
+        // 愿望单折叠动画
+        document.querySelectorAll('.wishlist-title').forEach(function(title){
+            title.addEventListener('click', function(){
+                title.classList.toggle('wishlist-expanded');
+                title.classList.toggle('wishlist-collapsed');
+            });
+        });
     </script>
 </body>
 </html>

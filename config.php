@@ -289,28 +289,34 @@ function updateUserGameStatus($steamId) {
  * @return array|false 愿望单信息或失败时返回false
  */
 function getUserWishlist($steamId) {
-    $url = "https://store.steampowered.com/api/wishlist/profiles/" . $steamId;
+    $url = "https://store.steampowered.com/wishlist/profiles/" . $steamId . "/wishlistdata/?p=0";
     $response = file_get_contents($url);
-    
+
     if ($response === false) {
         return false;
     }
-    
+
     $data = json_decode($response, true);
-    
+
     if (is_array($data)) {
-        // 添加获取时间
-        foreach ($data as &$item) {
-            $item['fetch_time'] = time();
-        }
-        
-        // 保存到缓存
+        // 读取已有缓存，合并新老 fetch_time
         $cacheFile = DATA_DIR . "/wishlist_" . $steamId . ".json";
-        file_put_contents($cacheFile, json_encode($data));
-        
+        $old = [];
+        if (file_exists($cacheFile)) {
+            $old = json_decode(file_get_contents($cacheFile), true);
+        }
+        foreach ($data as $appid => &$item) {
+            if (isset($old[$appid]['fetch_time'])) {
+                $item['fetch_time'] = $old[$appid]['fetch_time'];
+            } else {
+                $item['fetch_time'] = time(); // 新增的才打时间戳
+            }
+        }
+        unset($item);
+
+        file_put_contents($cacheFile, json_encode($data, JSON_UNESCAPED_UNICODE));
         return $data;
     }
-    
     return false;
 }
 
