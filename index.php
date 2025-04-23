@@ -1,6 +1,6 @@
 <?php
-// index.php - 主页面
 require_once 'config.php';
+require_once 'fcm_register.php';
 
 // 获取要监控的Steam ID
 $steamIds = [];
@@ -85,6 +85,31 @@ foreach ($steamIds as $steamId) {
         }
     }
     $allWishlistNewToday[$steamId] = $hasNewToday;
+}
+
+// 处理FCM测试推送
+if (isset($_GET['test_fcm']) && in_array($_GET['test_fcm'], $steamIds)) {
+    $testResult = sendFMCTestNotification($_GET['test_fcm']);
+    if ($testResult) {
+        echo '<div class="alert alert-success">测试推送已发送！</div>';
+    } else {
+        echo '<div class="alert alert-danger">测试推送发送失败，请检查FCM设置！</div>';
+    }
+}
+
+// 处理FCM设置更新
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['fcm_settings'])) {
+    $steamId = $_POST['steam_id'];
+    if (in_array($steamId, $steamIds)) {
+        $settings = getFCMSettings($steamId);
+        $settings['enabled'] = isset($_POST['fcm_enabled']);
+        $settings['notify_online'] = isset($_POST['notify_online']);
+        $settings['notify_gaming'] = isset($_POST['notify_gaming']);
+        $settings['notify_away'] = isset($_POST['notify_away']);
+        saveFCMSettings($steamId, $settings);
+    }
+    header('Location: ' . $_SERVER['HTTP_REFERER']);
+    exit;
 }
 
 // HTML输出
@@ -322,6 +347,9 @@ foreach ($steamIds as $steamId) {
                                 <i class="fas fa-sync-alt"></i> 刷新
                             </a>
                             <?php endif; ?>
+                            <a href="?test_fcm=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-warning me-2">
+                                <i class="fas fa-bell"></i> 测试推送
+                            </a>
                             <a href="?remove=<?php echo $steamId; ?>" class="btn btn-sm btn-outline-danger" onclick="return confirm('确定要删除这个用户吗?');">
                                 <i class="fas fa-trash"></i>
                             </a>
@@ -451,7 +479,98 @@ foreach ($steamIds as $steamId) {
                                     <?php endif; ?>
                                 </div>
                             </div>
+                            <!-- FCM设置面板 -->
+                            <div class="mt-4">
+                                <h5><i class="fas fa-bell"></i> 推送通知设置</h5>
+                                <?php 
+                                $fcmSettings = getFCMSettings($steamId);
+                                $isPublicProfile = ($records['visibility'] ?? 0) == 3;
+                                ?>
+                                <form method="post" class="fcm-settings-form">
+                                    <input type="hidden" name="fcm_settings" value="1">
+                                    <input type="hidden" name="steam_id" value="<?= htmlspecialchars($steamId) ?>">
+                                    
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" name="fcm_enabled" 
+                                            id="fcm-enabled-<?= $steamId ?>" 
+                                            <?= $fcmSettings['enabled'] ? 'checked' : '' ?>
+                                            <?= !$isPublicProfile ? 'disabled' : '' ?>>
+                                        <label class="form-check-label" for="fcm-enabled-<?= $steamId ?>">
+                                            启用推送通知
+                                            <?php if (!$isPublicProfile): ?>
+                                                <small class="text-warning">（需要公开Steam资料）</small>
+                                            <?php endif; ?>
+                                        </label>
+                                    </div>
+                                    
+                                    <div class="ms-4">
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" name="notify_online" 
+                                                id="notify-online-<?= $steamId ?>" 
+                                                <?= $fcmSettings['notify_online'] ? 'checked' : '' ?>
+                                                <?= !$fcmSettings['enabled'] ? 'disabled' : '' ?>>
+                                            <label class="form-check-label" for="notify-online-<?= $steamId ?>">
+                                                通知在线状态变化
+                                            </label>
+                                        </div>
+                                        
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" name="notify_gaming" 
+                                                id="notify-gaming-<?= $steamId ?>" 
+                                                <?= $fcmSettings['notify_gaming'] ? 'checked' : '' ?>
+                                                <?= !$fcmSettings['enabled'] ? 'disabled' : '' ?>>
+                                            <label class="form-check-label" for="notify-gaming-<?= $steamId ?>">
+                                                通知游戏开始/结束
+                                            </label>
+                                        </div>
+                                        
+                                        <div class="form-check mb-2">
+                                            <input class="form-check-input" type="checkbox" name="notify_away" 
+                                                id="notify-away-<?= $steamId ?>" 
+                                                <?= $fcmSettings['notify_away'] ? 'checked' : '' ?>
+                                                <?= !$fcmSettings['enabled'] ? 'disabled' : '' ?>>
+                                            <label class="form-check-label" for="notify-away-<?= $steamId ?>">
+                                                通知离开状态变化
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <button type="submit" class="btn btn-sm btn-primary mt-2">保存设置</button>
+                                </form>
+                                
+                                <!-- 显示已注册设备 -->
+                                <div class="mt-3">
+                                    <h6>已注册设备 (<?= count($fcmSettings['tokens'] ?? []) ?>)</h6>
+                                    <ul class="list-group">
+                                        <?php foreach ($fcmSettings['tokens'] ?? [] as $token): ?>
+                                            <li class="list-group-item py-1">
+                                                <small class="font-monospace"><?= substr($token, 0, 6) ?>...<?= substr($token, -6) ?></small>
+                                                <button class="btn btn-sm btn-danger float-end" 
+                                                        onclick="if(confirm('确定要删除这个设备吗？')) { location.href='fcm_unregister.php?steam_id=<?= $steamId ?>&token=<?= urlencode($token) ?>'; }">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                </div>
+                            </div>
                         </div>
+                        <!-- 添加JavaScript处理表单状态 -->
+                        <script>
+                        document.querySelectorAll('.fcm-settings-form input[type="checkbox"]').forEach(checkbox => {
+                            // 主开关的联动控制
+                            if (checkbox.name === 'fcm_enabled') {
+                                checkbox.addEventListener('change', function() {
+                                    const subCheckboxes = this.closest('form').querySelectorAll('input[type="checkbox"]:not([name="fcm_enabled"])');
+                                    subCheckboxes.forEach(cb => {
+                                        cb.disabled = !this.checked;
+                                        if (!this.checked) cb.checked = false;
+                                    });
+                                });
+                            }
+                        });
+                        </script>
+                        </div>                        
                     </div>
                 <?php endforeach; ?>
                 
