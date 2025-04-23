@@ -808,7 +808,9 @@ function sendFCMNotification($token, $title, $body, $data = []) {
                 'title' => $title,
                 'body' => $body
             ],
-            'data' => $data
+            'data' => array_map(function($v) { 
+                return is_array($v) ? json_encode($v) : strval($v); 
+            }, $data)
         ]
     ];
 
