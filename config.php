@@ -10,6 +10,7 @@ define('TIMEZONE', 'Asia/Shanghai'); // UTC+8
 // Firebase配置
 define('GOOGLE_APPLICATION_CREDENTIALS', __DIR__ . '/firebase-service-account.json');
 define('FCM_API_URL', 'https://fcm.googleapis.com/v1/projects/your-project-id/messages:send');
+define('ENABLE_FCM_DEBUG_LOG', true);
 define('FCM_DEBUG_LOG', FCM_LOGS_DIR . '/fcm_debug.log');
 
 // 创建必要目录
@@ -34,6 +35,10 @@ header('X-XSS-Protection: 1; mode=block');
  * @param array $context 上下文数据
  */
 function logDebug($message, $context = []) {
+    if (!ENABLE_FCM_DEBUG_LOG) {
+        // 如果调试日志被禁用，直接返回
+        return;
+    }
     $logEntry = [
         'timestamp' => date('Y-m-d H:i:s'),
         'message' => $message,
